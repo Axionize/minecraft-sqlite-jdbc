@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BOT_NAME: "Axionize (automation)"
+      BOT_NAME: "Axionize"
       BOT_EMAIL: "Axionize+bot@example.com"
 
     steps:
@@ -37,6 +37,10 @@ jobs:
           echo "latest=$latest"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
+      # 2½) Make the version available as an env var
+      - name: Export NEW_VER
+        run: echo "NEW_VER=${{ steps.maven.outputs.latest }}" >> $GITHUB_ENV
+
       # ─────────────────────────────────────────────────────────
       # 3) Current version in gradle.properties
       # ─────────────────────────────────────────────────────────
@@ -47,12 +51,32 @@ jobs:
           echo "current=$current"
           echo "current=$current" >> "$GITHUB_OUTPUT"
 
+      # 3½) Export NEW_VER (already in your file)
+      - name: Export NEW_VER
+        run: echo "NEW_VER=${{ steps.maven.outputs.latest }}" >> $GITHUB_ENV
+
       # ─────────────────────────────────────────────────────────
       # 4) Exit early if nothing to update
       # ─────────────────────────────────────────────────────────
       - name: Skip if up‑to‑date
         if: ${{ steps.maven.outputs.latest == steps.current.outputs.current }}
         run: echo "Nothing to bump — already on ${{ steps.current.outputs.current }}."
+
+      # 5) Bump version & release_date  ── we already compute TODAY here
+      - name: Bump version & release date
+        id: bump
+        if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
+        run: |
+          set -e
+          TODAY=$(date -u +%F)                       # 2024-06-08
+          echo "TODAY=$TODAY" >> $GITHUB_ENV        # ←  make it available later
+          
+          sed -i "s/^library_version=.*/library_version=${{ steps.maven.outputs.latest }}/" gradle.properties
+          if grep -q '^release_date=' gradle.properties; then
+            sed -i "s/^release_date=.*/release_date=${TODAY}/" gradle.properties
+          else
+            echo "release_date=${TODAY}" >> gradle.properties
+          fi
 
       # ---------------------------------------------------------------------
       # 5)  OPTION A → Commit directly to main  (UNCOMMENT to use)
@@ -73,23 +97,28 @@ jobs:
       # ---------------------------------------------------------------------
       # 5/6) OPTION B → PR + auto‑merge  (DEFAULT below)
       # ---------------------------------------------------------------------
-      - name: Open PR & auto‑merge   #  ← default: option B
+      # 6) Create or update the PR
+      - name: Create PR
+        id: create-pr
         if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
         uses: peter-evans/create-pull-request@v5
         with:
-          token:          ${{ secrets.GITHUB_TOKEN }}
-          branch:         bump-sqlite-${{ steps.maven.outputs.latest }}
-          commit-message: "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: bump-sqlite-${{ steps.maven.outputs.latest }}
+          add-paths: gradle.properties
+          commit-message: "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }} (released ${{ env.TODAY }})"
           title:          "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }}"
           body: |
-            Automated bump from **${{ steps.current.outputs.current }}**
-            to **${{ steps.maven.outputs.latest }}**.
-
-            This PR will merge itself once CI passes.
-          labels: dependencies, automated
+            Automated bump  
+            • **library_version** → `${{ steps.maven.outputs.latest }}`  
+            • **release_date**    → `${{ env.TODAY }}`
           delete-branch: true
-          # ----- auto‑merge controls -----
-          merge: true                   # merge right after CI succeeds
-          merge-method: squash
           author: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
           committer: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
+
+      # 7) Enable auto‑merge
+      - name: Enable PR auto‑merge
+        if: ${{ steps.create-pr.outputs.pull-request-number }}
+        run: gh pr merge --squash --auto "${{ steps.create-pr.outputs.pull-request-number }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
