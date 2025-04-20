@@ -22,9 +22,43 @@ dependencies {
     implementation(project(":spigot")) { transitive = false }
 }
 
+import org.apache.tools.ant.filters.ReplaceTokens
+
 processResources {
-    filesMatching(['fabric.mod.json', 'plugin.yml', 'mcmod.info', 'META-INF/mods.toml', 'pack.mcmeta']) {
-        expand project.properties
+
+    /* --- 1. Collect authors ------------------------------------------------ */
+
+    // Comma‑separated list from gradle.properties → ["author1", "author2"]
+    def modAuthors = project.findProperty('mod_author') ?
+            project.mod_author.split(',').collect { it.trim() } : []
+
+    // Optional vendor from gradle.properties → "vendor"
+    def vendor = project.findProperty('mod_vendor')?.trim()
+
+    def fullAuthorList = modAuthors + (vendor ? [vendor] : [])
+
+    /* --- 2. Build the replacement strings --------------------------------- */
+
+    // author1", "author2", "vendor    <-- NO outer quotes
+    def modAuthorListString = fullAuthorList.join('", "')
+
+    def expandedProps = project.properties + [
+            // plain, human‑readable version: author1, author2, vendor
+            mod_author_plain : fullAuthorList.join(', '),
+            // JSON‑ready fragment (without outer quotes)
+            mod_author_list  : modAuthorListString
+    ]
+
+    /* --- 3. Apply the replacements ---------------------------------------- */
+
+    filesMatching([
+            'mcmod.info',
+            'plugin.yml',
+            'fabric.mod.json',
+            'META-INF/mods.toml',
+            'pack.mcmeta'
+    ]) {
+        expand expandedProps
     }
 }
 

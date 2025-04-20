@@ -5,8 +5,7 @@
   "name": "${mod_name}",
   "description": "${mod_description}",
   "authors": [
-    "${mod_vendor}",
-    "${mod_author}"
+    "${mod_author_list}"
   ],
   "contact": {
     "homepage": "https://www.curseforge.com/minecraft/mc-mods/${mod_slug}",

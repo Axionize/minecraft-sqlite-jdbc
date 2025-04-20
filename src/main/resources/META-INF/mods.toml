@@ -9,6 +9,6 @@ version="${version}"
 displayName="${mod_name}"
 displayURL="https://www.curseforge.com/minecraft/mc-mods/${mod_slug}"
 logoFile="${mod_slug}.png"
-authors="${mod_vendor}, ${mod_author}"
+authors="${mod_author_plain}"
 description='''${mod_description}'''
 displayTest="IGNORE_ALL_VERSION"

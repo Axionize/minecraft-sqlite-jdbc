@@ -1,0 +1,95 @@
+name: Auto‑Bump SQLite‑JDBC
+
+on:
+  schedule:                # every day at 05:00 UTC
+    - cron: '0 5 * * *'
+  workflow_dispatch:       # manual “Run workflow” button
+
+permissions:
+  contents: write          # push commits, create releases
+  pull-requests: write     # open / merge PRs
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    env:
+      BOT_NAME: "Axionize (automation)"
+      BOT_EMAIL: "Axionize+bot@example.com"
+
+    steps:
+      # ─────────────────────────────────────────────────────────
+      # 1) Checkout
+      # ─────────────────────────────────────────────────────────
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # writeable token
+
+      # ─────────────────────────────────────────────────────────
+      # 2) Latest version on Maven Central
+      # ─────────────────────────────────────────────────────────
+      - name: Fetch newest sqlite‑jdbc
+        id: maven
+        run: |
+          latest=$(curl -s \
+            'https://search.maven.org/solrsearch/select?q=g:%22org.xerial%22+AND+a:%22sqlite-jdbc%22&rows=1&wt=json' \
+            | jq -r '.response.docs[0].latestVersion')
+          echo "latest=$latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────
+      # 3) Current version in gradle.properties
+      # ─────────────────────────────────────────────────────────
+      - name: Read current version
+        id: current
+        run: |
+          current=$(grep '^library_version=' gradle.properties | cut -d'=' -f2)
+          echo "current=$current"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────
+      # 4) Exit early if nothing to update
+      # ─────────────────────────────────────────────────────────
+      - name: Skip if up‑to‑date
+        if: ${{ steps.maven.outputs.latest == steps.current.outputs.current }}
+        run: echo "Nothing to bump — already on ${{ steps.current.outputs.current }}."
+
+      # ---------------------------------------------------------------------
+      # 5)  OPTION A → Commit directly to main  (UNCOMMENT to use)
+      # ---------------------------------------------------------------------
+      # - name: Bump + push to main   #  ← uncomment block to enable option A
+      #   if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
+      #   env:
+      #     LATEST:  ${{ steps.maven.outputs.latest }}
+      #   run: |
+      #     set -e
+      #     sed -i "s/^library_version=.*/library_version=${LATEST}/" gradle.properties
+      #     git config user.name  "Axionize"
+      #     git config user.email "154778082+Axionize@users.noreply.github.com"
+      #     git add gradle.properties
+      #     git commit -m "chore: bump sqlite-jdbc to ${LATEST}"
+      #     git push origin HEAD:main
+
+      # ---------------------------------------------------------------------
+      # 5/6) OPTION B → PR + auto‑merge  (DEFAULT below)
+      # ---------------------------------------------------------------------
+      - name: Open PR & auto‑merge   #  ← default: option B
+        if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token:          ${{ secrets.GITHUB_TOKEN }}
+          branch:         bump-sqlite-${{ steps.maven.outputs.latest }}
+          commit-message: "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }}"
+          title:          "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }}"
+          body: |
+            Automated bump from **${{ steps.current.outputs.current }}**
+            to **${{ steps.maven.outputs.latest }}**.
+
+            This PR will merge itself once CI passes.
+          labels: dependencies, automated
+          delete-branch: true
+          # ----- auto‑merge controls -----
+          merge: true                   # merge right after CI succeeds
+          merge-method: squash
+          author: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
+          committer: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"

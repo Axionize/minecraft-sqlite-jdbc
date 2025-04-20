@@ -1,23 +1,76 @@
-name: Java CI
+name: Nightly Release
 
-on: [push]
+on:
+  # rebuild on every push to the default branch
+  push:
+    branches: [ main ]
+
+  # …and once a day at 04:00 UTC (if uncommented)
+#  schedule:
+#    - cron: '0 4 * * *'
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
 
+    env:
+      BOT_NAME: "Axionize (automation)"
+      BOT_EMAIL: "Axionize+bot@example.com"
+
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up JDK
-        uses: actions/setup-java@v2
+      # ─────────────────────────────────────────────────────────────
+      #  1. Check out sources
+      # ─────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v3
+
+      # ─────────────────────────────────────────────────────────────
+      #  2. JDK8 + Gradle cache
+      # ─────────────────────────────────────────────────────────────
+      - name: Set up JDK8
+        uses: actions/setup-java@v3
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '8'
+          cache: gradle
+
+      # ─────────────────────────────────────────────────────────────
+      #  3. Validate wrapper (supply SHA-256 whitelist)
+      # ─────────────────────────────────────────────────────────────
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
-      - name: Build with Gradle
-        run: ./gradlew build
-      - uses: actions/upload-artifact@v2
+
+      # ─────────────────────────────────────────────────────────────
+      #  4. Build shaded JAR
+      # ─────────────────────────────────────────────────────────────
+      - name: Build
+        uses: gradle/gradle-build-action@v2
         with:
-          name: Package
-          path: build/libs/*-all.jar
+          arguments: clean build --no-daemon --stacktrace
+
+      # ─────────────────────────────────────────────────────────────
+      #  5. Find the JAR and extract its version
+      # ─────────────────────────────────────────────────────────────
+      - name: Locate JAR & extract version
+        id: locate
+        run: |
+          set -e
+          jar=$(ls -1 build/libs/*-all.jar | head -n1)
+          echo "jar=$jar" >>"$GITHUB_OUTPUT"
+
+          # pull the version part out of the filename:
+          # sqlite-jdbc-3.49.1.0+20250420-all.jar  ->  3.49.1.0+20250420
+          ver=$(basename "$jar" | sed -E 's/^sqlite-jdbc-([^+]+(\+[0-9]+)?)-all\.jar$/\1/')
+          echo "ver=$ver" >>"$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────────────────────────
+      #  6. Create/update a version‑tagged release
+      # ─────────────────────────────────────────────────────────────
+      - name: Publish nightly release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly-${{ steps.locate.outputs.ver }}     # ex: nightly-3.49.1.0+20250420
+          name: Nightly ${{ steps.locate.outputs.ver }}
+          artifacts: ${{ steps.locate.outputs.jar }}
+          prerelease: true
+          makeLatest: true              # marks this release as “latest”
+          token: ${{ secrets.GITHUB_TOKEN }}
