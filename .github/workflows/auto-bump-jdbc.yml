@@ -6,7 +6,7 @@ on:
   workflow_dispatch:       # manual “Run workflow” button
 
 permissions:
-  contents: write          # push commits, create releases
+  contents: write          # push commits, create releases, trigger dispatch
   pull-requests: write     # open / merge PRs
 
 jobs:
@@ -15,25 +15,19 @@ jobs:
 
     env:
       BOT_NAME: "Axionize"
-      BOT_EMAIL: "Axionize+bot@example.com"
+      BOT_EMAIL: "Axionize+bot@example.com" # Use the actual committer email
 
     steps:
-      # ─────────────────────────────────────────────────────────
       # 1) Checkout
-      # ─────────────────────────────────────────────────────────
       - uses: actions/checkout@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}   # writeable token
 
-      # ─────────────────────────────────────────────────────────
       # 2) Latest version on Maven Central
-      # ─────────────────────────────────────────────────────────
       - name: Fetch newest sqlite‑jdbc
         id: maven
         run: |
-          latest=$(curl -s \
-            'https://search.maven.org/solrsearch/select?q=g:%22org.xerial%22+AND+a:%22sqlite-jdbc%22&rows=1&wt=json' \
-            | jq -r '.response.docs[0].latestVersion')
+          latest=$(curl -s 'https://search.maven.org/solrsearch/select?q=g:%22org.xerial%22+AND+a:%22sqlite-jdbc%22&rows=1&wt=json' | jq -r '.response.docs[0].latestVersion')
           echo "latest=$latest"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
@@ -41,84 +35,110 @@ jobs:
       - name: Export NEW_VER
         run: echo "NEW_VER=${{ steps.maven.outputs.latest }}" >> $GITHUB_ENV
 
-      # ─────────────────────────────────────────────────────────
       # 3) Current version in gradle.properties
-      # ─────────────────────────────────────────────────────────
       - name: Read current version
         id: current
         run: |
-          current=$(grep '^library_version=' gradle.properties | cut -d'=' -f2)
+          current=$(grep '^library_version=' gradle.properties | cut -d'=' -f2 || echo "NOT_FOUND") # Handle missing file/key gracefully
           echo "current=$current"
           echo "current=$current" >> "$GITHUB_OUTPUT"
 
-      # 3½) Export NEW_VER (already in your file)
-      - name: Export NEW_VER
-        run: echo "NEW_VER=${{ steps.maven.outputs.latest }}" >> $GITHUB_ENV
-
-      # ─────────────────────────────────────────────────────────
-      # 4) Exit early if nothing to update
-      # ─────────────────────────────────────────────────────────
-      - name: Skip if up‑to‑date
-        if: ${{ steps.maven.outputs.latest == steps.current.outputs.current }}
-        run: echo "Nothing to bump — already on ${{ steps.current.outputs.current }}."
-
-      # 5) Bump version & release_date  ── we already compute TODAY here
-      - name: Bump version & release date
-        id: bump
-        if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
+      # 4) Exit early if nothing to update (or error reading current)
+      - name: Check versions and decide action
+        id: decision
         run: |
-          set -e
-          TODAY=$(date -u +%F)                       # 2024-06-08
-          echo "TODAY=$TODAY" >> $GITHUB_ENV        # ←  make it available later
-          
-          sed -i "s/^library_version=.*/library_version=${{ steps.maven.outputs.latest }}/" gradle.properties
-          if grep -q '^release_date=' gradle.properties; then
-            sed -i "s/^release_date=.*/release_date=${TODAY}/" gradle.properties
+          if [[ "${{ steps.maven.outputs.latest }}" == "${{ steps.current.outputs.current }}" ]]; then
+            echo "Version is up-to-date (${{ steps.current.outputs.current }}). No action needed."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.current.outputs.current }}" == "NOT_FOUND" ]]; then
+            echo "Could not read current version from gradle.properties. Skipping bump."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "${{ steps.maven.outputs.latest }}" ]]; then
+            echo "Could not fetch latest version from Maven. Skipping bump."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
           else
-            echo "release_date=${TODAY}" >> gradle.properties
+            echo "Current version (${{ steps.current.outputs.current }}) differs from latest (${{ steps.maven.outputs.latest }}). Proceeding with bump."
+            echo "should_bump=true" >> "$GITHUB_OUTPUT"
+            echo "TODAY=$(date -u +%F)" >> $GITHUB_ENV # Set TODAY env var only if bumping
           fi
 
-      # ---------------------------------------------------------------------
-      # 5)  OPTION A → Commit directly to main  (UNCOMMENT to use)
-      # ---------------------------------------------------------------------
-      # - name: Bump + push to main   #  ← uncomment block to enable option A
-      #   if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
-      #   env:
-      #     LATEST:  ${{ steps.maven.outputs.latest }}
+      # 5) Bump version & release_date
+      - name: Bump version & release date in gradle.properties
+        if: steps.decision.outputs.should_bump == 'true'
+        run: |
+          set -e
+          echo "Updating gradle.properties to version ${{ env.NEW_VER }} and date ${{ env.TODAY }}"
+          sed -i "s/^library_version=.*/library_version=${{ env.NEW_VER }}/" gradle.properties
+          if grep -q '^release_date=' gradle.properties; then
+            sed -i "s/^release_date=.*/release_date=${{ env.TODAY }}/" gradle.properties
+          else
+            echo "release_date=${{ env.TODAY }}" >> gradle.properties
+          fi
+          echo "gradle.properties updated."
+
+      # --- CHOOSE ONE OF THE FOLLOWING OPTIONS (A or B) ---
+
+      # OPTION A: Commit directly to main
+      # - name: Commit and Push Bump Directly to main
+      #   if: steps.decision.outputs.should_bump == 'true'
       #   run: |
       #     set -e
-      #     sed -i "s/^library_version=.*/library_version=${LATEST}/" gradle.properties
-      #     git config user.name  "Axionize"
-      #     git config user.email "154778082+Axionize@users.noreply.github.com"
+      #     git config user.name "${{ env.BOT_NAME }}"
+      #     git config user.email "${{ env.BOT_EMAIL }}"
       #     git add gradle.properties
-      #     git commit -m "chore: bump sqlite-jdbc to ${LATEST}"
+      #     git commit -m "chore: bump sqlite-jdbc to ${{ env.NEW_VER }} (released ${{ env.TODAY }})"
+      #     echo "Pushing changes to main..."
       #     git push origin HEAD:main
+      #     echo "Changes pushed."
 
-      # ---------------------------------------------------------------------
-      # 5/6) OPTION B → PR + auto‑merge  (DEFAULT below)
-      # ---------------------------------------------------------------------
-      # 6) Create or update the PR
+      # OPTION B: Create PR and Enable Auto-Merge (DEFAULT in your original)
       - name: Create PR
         id: create-pr
-        if: ${{ steps.maven.outputs.latest != steps.current.outputs.current }}
+        if: steps.decision.outputs.should_bump == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: bump-sqlite-${{ steps.maven.outputs.latest }}
-          add-paths: gradle.properties
-          commit-message: "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }} (released ${{ env.TODAY }})"
-          title:          "chore: bump sqlite-jdbc to ${{ steps.maven.outputs.latest }}"
-          body: |
-            Automated bump  
-            • **library_version** → `${{ steps.maven.outputs.latest }}`  
-            • **release_date**    → `${{ env.TODAY }}`
-          delete-branch: true
+          # Use the specific BOT_EMAIL for author/committer
           author: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
           committer: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: bump-sqlite-${{ env.NEW_VER }}
+          add-paths: gradle.properties
+          commit-message: "chore: bump sqlite-jdbc to ${{ env.NEW_VER }} (released ${{ env.TODAY }})"
+          title:          "chore: bump sqlite-jdbc to ${{ env.NEW_VER }}"
+          body: |
+            Automated bump
+            • **library_version** → `${{ env.NEW_VER }}`
+            • **release_date**    → `${{ env.TODAY }}`
+          delete-branch: true
 
-      # 7) Enable auto‑merge
       - name: Enable PR auto‑merge
-        if: ${{ steps.create-pr.outputs.pull-request-number }}
-        run: gh pr merge --squash --auto "${{ steps.create-pr.outputs.pull-request-number }}"
+        id: merge-pr # Give it an ID for potential future checks
+        # Run only if the PR was actually created in the previous step
+        if: steps.create-pr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Enabling auto-merge for PR #${{ steps.create-pr.outputs.pull-request-number }}"
+          gh pr merge --squash --auto "${{ steps.create-pr.outputs.pull-request-number }}"
+          echo "Auto-merge enabled."
+          # Note: Merging happens asynchronously after checks pass.
+
+      # --- END OF OPTIONS ---
+
+      # 6) ***NEW STEP***: Send repository_dispatch IF a bump occurred
+      - name: Trigger Nightly Release via Dispatch
+        # Condition: EITHER direct push was attempted OR a PR was created
+        if: steps.decision.outputs.should_bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the new version info if needed by the triggered workflow
+          NEW_VER_PAYLOAD: ${{ env.NEW_VER }}
+        run: |
+          echo "Bump occurred. Sending repository_dispatch event: sqlite_jdbc_bumped"
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            /repos/${{ github.repository }}/dispatches \
+            -f event_type='sqlite_jdbc_bumped' \
+            -f client_payload='{"version": "${{ env.NEW_VER_PAYLOAD }}", "reason": "Auto-bump completed"}'
+          echo "Dispatch event sent."
