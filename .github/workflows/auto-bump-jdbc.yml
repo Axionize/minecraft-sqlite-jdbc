@@ -134,11 +134,26 @@ jobs:
           # Pass the new version info if needed by the triggered workflow
           NEW_VER_PAYLOAD: ${{ env.NEW_VER }}
         run: |
+          set -e # Exit on error
           echo "Bump occurred. Sending repository_dispatch event: sqlite_jdbc_bumped"
-          gh api \
+
+          # Construct the full JSON payload using a heredoc
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "event_type": "sqlite_jdbc_bumped",
+            "client_payload": {
+              "version": "${NEW_VER_PAYLOAD}",
+              "reason": "Auto-bump completed"
+            }
+          }
+          EOF
+          )
+
+          # Pipe the JSON payload into gh api using --input -
+          echo "$JSON_PAYLOAD" | gh api \
             --method POST \
             -H "Accept: application/vnd.github.v3+json" \
             /repos/${{ github.repository }}/dispatches \
-            -f event_type='sqlite_jdbc_bumped' \
-            -f client_payload='{"version": "${{ env.NEW_VER_PAYLOAD }}", "reason": "Auto-bump completed"}'
+            --input -
+
           echo "Dispatch event sent."
