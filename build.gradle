@@ -7,9 +7,6 @@ group = 'pl.kosma'
 archivesBaseName = "${project.library_name}"
 version = "${project.library_version}+${project.release_date}"
 
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(8)
-}
 repositories {
     mavenCentral()
 }
@@ -20,9 +17,8 @@ dependencies {
     implementation(project(":forge-1.13")) { transitive = false }
     implementation(project(":forge-1.17")) { transitive = false }
     implementation(project(":spigot")) { transitive = false }
+    implementation(project(":neoforge-1.21")) { transitive = false }
 }
-
-import org.apache.tools.ant.filters.ReplaceTokens
 
 processResources {
 
@@ -56,6 +52,7 @@ processResources {
             'plugin.yml',
             'fabric.mod.json',
             'META-INF/mods.toml',
+            'META-INF/neoforge.mods.toml',
             'pack.mcmeta'
     ]) {
         expand expandedProps
@@ -70,6 +67,7 @@ shadowJar {
         include(project(":forge-1.13"))
         include(project(":forge-1.17"))
         include(project(":spigot"))
+        include(project(":neoforge-1.21"))
     }
 }
 
