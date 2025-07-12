@@ -44,13 +44,13 @@ jobs:
       # ─────────────────────────────────────────────────────────────
 
       # ─────────────────────────────────────────────────────────────
-      #  2. JDK8 + Gradle cache (Runs unconditionally now when job starts)
+      #  2. JDK21 + Gradle cache (Runs unconditionally now when job starts)
       # ─────────────────────────────────────────────────────────────
-      - name: Set up JDK8
+      - name: Set up JDK21
         uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: '8'
+          java-version: '21'
           cache: gradle
 
       # ─────────────────────────────────────────────────────────────
@@ -90,9 +90,9 @@ jobs:
           echo "Extracted version: $ver from $jar_path"
 
       # ─────────────────────────────────────────────────────────────
-      #  6. Create/update a version‑tagged release
+      #  6. Publishing
       # ─────────────────────────────────────────────────────────────
-      - name: Publish nightly release
+      - name: Publish Nightly Release
         # Only condition now is that locate step must succeed
         if: steps.locate.outputs.ver != ''
         uses: ncipollo/release-action@v1
@@ -104,3 +104,44 @@ jobs:
           makeLatest: true
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-sqlite-jdbc
+          path: ${{ steps.locate.outputs.jar }}
+          if-no-files-found: error
+
+      - name: Publish to Modrinth
+        uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id:      ${{ vars.MODRINTH_ID }}
+          modrinth-token:   ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-featured: true
+          modrinth-unfeature-mode: subset
+
+          files: |
+            ${{ steps.locate.outputs.jar }}
+
+          name: ${{ steps.locate.outputs.ver }}
+          version: ${{ steps.locate.outputs.ver }}
+          version-type: release
+          changelog: ${{ steps.changelog.outputs.notes }}
+
+          loaders: |
+            bukkit
+            spigot
+            paper
+            folia
+            purpur
+            forge
+            neoforge
+            quilt
+            fabric
+
+          game-versions: |
+            >=1.12.2
+
+          retry-attempts: 2
+          retry-delay:   10000
+          fail-mode: fail
