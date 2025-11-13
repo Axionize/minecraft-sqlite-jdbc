@@ -1,51 +1,44 @@
 name: Nightly Release
 
 on:
-  # Trigger on pushes to main (covers manual pushes, other non-bot pushes)
   push:
     branches: [ main ]
-
-  # ***CHANGED***: Trigger ONLY when Auto-Bump sends the specific dispatch event
   repository_dispatch:
-    types: [sqlite_jdbc_bumped] # Matches event_type sent by Auto-Bump
+    types: [ sqlite_jdbc_bumped ]
 
-  # ***REMOVED***: No longer need workflow_run trigger
-  # workflow_run:
-  #   workflows: ["Auto‑Bump SQLite‑JDBC"]
-  #   types: [completed]
-
-  # Optional: Keep schedule if you want independent nightly builds
-#  schedule:
-#    - cron: '0 4 * * *'
+permissions:
+  contents: write # Needed for ncipollo/release-action to create releases and tags
 
 jobs:
   build-and-release:
-    # No complex 'if' condition needed at the job level anymore,
-    # the triggers themselves filter correctly.
     runs-on: ubuntu-latest
-
-    env:
-      # These are less critical now but good practice
-      BOT_NAME: "Axionize (automation)"
-      BOT_EMAIL: "Axionize+bot@example.com"
-
     steps:
-      # ─────────────────────────────────────────────────────────────
-      #  1. Check out sources (ensure it gets the code AFTER the bump)
-      # ─────────────────────────────────────────────────────────────
+      # 1. Check out sources
       - uses: actions/checkout@v3
         with:
-          # When triggered by dispatch/push, checkout should get the latest commit
-          # that includes the bump. fetch-depth: 0 might be needed if release notes use history.
-          ref: 'main' # Explicitly checkout main
+          ref: 'main'
+          fetch-depth: 0 # Needed for changelogs based on git history
 
-      # ─────────────────────────────────────────────────────────────
-      #  ***REMOVED***: No longer need the run_condition check step
-      # ─────────────────────────────────────────────────────────────
+      # 2. Extract Changelog
+      - name: Extract Changelog
+        id: changelog
+        run: |
+          NOTES=""
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            echo "Using changelog from dispatch payload."
+            NOTES="${{ github.event.client_payload.changelog }}"
+          else
+            echo "Using latest git commit message as changelog."
+            NOTES=$(git log -1 --pretty=%B)
+          fi
+          # This is the robust way to pass multiline strings
+          {
+            echo 'notes<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      # ─────────────────────────────────────────────────────────────
-      #  2. JDK21 + Gradle cache (Runs unconditionally now when job starts)
-      # ─────────────────────────────────────────────────────────────
+      # 3. Set up JDK21 + Gradle cache
       - name: Set up JDK21
         uses: actions/setup-java@v3
         with:
@@ -53,52 +46,34 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      # ─────────────────────────────────────────────────────────────
-      #  3. Validate wrapper
-      # ─────────────────────────────────────────────────────────────
+      # 4. Validate and Build
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
-
-      # ─────────────────────────────────────────────────────────────
-      #  4. Build shaded JAR
-      # ─────────────────────────────────────────────────────────────
       - name: Build Shaded JAR
         uses: gradle/gradle-build-action@v2
         with:
-          arguments: clean build --no-daemon --stacktrace
+          arguments: 'clean build --no-daemon --stacktrace'
 
-      # ─────────────────────────────────────────────────────────────
-      #  5. Find the JAR and extract its version
-      # ─────────────────────────────────────────────────────────────
+      # 5. Find the JAR and extract its version
       - name: Locate JAR & extract version
         id: locate
         run: |
           set -e
           jar_path=$(ls -1 build/libs/*-all.jar | head -n1)
-          if [ -z "$jar_path" ]; then
-            echo "Error: Could not find the *-all.jar file in build/libs/"
-            exit 1
-          fi
-          echo "jar=$jar_path" >>"$GITHUB_OUTPUT"
-
+          if [ -z "$jar_path" ]; then echo "::error::Could not find the *-all.jar file" && exit 1; fi
           ver=$(basename "$jar_path" | sed -E 's/^sqlite-jdbc-([0-9.]+\+([0-9]{8}|[0-9]{4}-[0-9]{2}-[0-9]{2}))-all\.jar$/\1/')
-          if [ -z "$ver" ] || [ "$ver" == "$(basename "$jar_path")" ]; then
-             echo "Error: Could not extract version from JAR filename: $(basename "$jar_path")"
-             exit 1
-          fi
-          echo "ver=$ver" >>"$GITHUB_OUTPUT"
-          echo "Extracted version: $ver from $jar_path"
+          if [ -z "$ver" ] || [ "$ver" == "$(basename "$jar_path")" ]; then echo "::error::Could not extract version from JAR filename" && exit 1; fi
+          echo "jar=$jar_path" >> "$GITHUB_OUTPUT"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $ver"
 
-      # ─────────────────────────────────────────────────────────────
-      #  6. Publishing
-      # ─────────────────────────────────────────────────────────────
+      # 6. Publishing
       - name: Publish Nightly Release
-        # Only condition now is that locate step must succeed
-        if: steps.locate.outputs.ver != ''
         uses: ncipollo/release-action@v1
         with:
-          tag: nightly-${{ steps.locate.outputs.ver }}
-          name: Nightly ${{ steps.locate.outputs.ver }}
+          tag: "nightly-${{ steps.locate.outputs.ver }}"
+          name: "Nightly ${{ steps.locate.outputs.ver }}"
+          body: ${{ steps.changelog.outputs.notes }}
           artifacts: ${{ steps.locate.outputs.jar }}
           prerelease: true
           makeLatest: true
@@ -110,24 +85,19 @@ jobs:
         with:
           name: minecraft-sqlite-jdbc
           path: ${{ steps.locate.outputs.jar }}
-          if-no-files-found: error
 
       - name: Publish to Modrinth
         uses: Kir-Antipov/mc-publish@v3.3
         with:
-          modrinth-id:      ${{ vars.MODRINTH_ID }}
-          modrinth-token:   ${{ secrets.MODRINTH_TOKEN }}
+          modrinth-id: ${{ vars.MODRINTH_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           modrinth-featured: true
           modrinth-unfeature-mode: subset
-
-          files: |
-            ${{ steps.locate.outputs.jar }}
-
+          files: ${{ steps.locate.outputs.jar }}
           name: ${{ steps.locate.outputs.ver }}
           version: ${{ steps.locate.outputs.ver }}
           version-type: release
           changelog: ${{ steps.changelog.outputs.notes }}
-
           loaders: |
             bukkit
             spigot
