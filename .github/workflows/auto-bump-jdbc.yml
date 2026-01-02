@@ -154,7 +154,8 @@ jobs:
           JSON_PAYLOAD=$(jq -n \
             --arg ver "${{ steps.decision.outputs.new_version }}" \
             --arg changelog "${{ steps.decision.outputs.changelog }}" \
-            '{event_type: "sqlite_jdbc_bumped", client_payload: {version: $ver, changelog: $changelog}}')
+            --arg ref "refs/heads/bump/sqlite-${{ steps.decision.outputs.new_version }}" \
+            '{event_type: "sqlite_jdbc_bumped", client_payload: {version: $ver, changelog: $changelog, ref: $ref}}')
 
           echo "Sending dispatch with payload: $JSON_PAYLOAD"
           echo "$JSON_PAYLOAD" | gh api \

@@ -1,11 +1,13 @@
 plugins {
     id "java"
-    id "com.github.johnrengelman.shadow" version "7.1.2"
+    id "com.gradleup.shadow" version "9.3.0"
 }
 
 group = 'pl.kosma'
-archivesBaseName = "${project.library_name}"
 version = "${project.library_version}+${project.release_date}"
+base {
+    archivesName = "${project.library_name}"
+}
 
 repositories {
     mavenCentral()

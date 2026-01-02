@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   repository_dispatch:
     types: [ sqlite_jdbc_bumped ]
+  workflow_dispatch:
 
 permissions:
   contents: write # Needed for ncipollo/release-action to create releases and tags
@@ -16,7 +17,8 @@ jobs:
       # 1. Check out sources
       - uses: actions/checkout@v3
         with:
-          ref: 'main'
+          # If triggered by dispatch, use the payload ref. Otherwise (push/manual), use main.
+          ref: ${{ github.event.client_payload.ref || 'main' }}
           fetch-depth: 0 # Needed for changelogs based on git history
 
       # 2. Extract Changelog

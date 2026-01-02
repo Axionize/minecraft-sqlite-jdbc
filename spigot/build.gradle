@@ -9,8 +9,11 @@ repositories {
     maven { url 'https://oss.sonatype.org/content/repositories/central' }
 }
 
+base {
+    archivesName = "${rootProject.name}-${project.name}"
+}
+
 java {
-    archivesBaseName = "${rootProject.name}-${project.name}"
     toolchain.languageVersion = JavaLanguageVersion.of(8)
 }
 

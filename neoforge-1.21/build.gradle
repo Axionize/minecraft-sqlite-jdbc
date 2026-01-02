@@ -2,8 +2,11 @@ plugins {
     id 'java'
 }
 
+base {
+    archivesName = "${rootProject.name}-${project.name}"
+}
+
 java {
-    archivesBaseName = "${rootProject.name}-${project.name}"
     toolchain.languageVersion = JavaLanguageVersion.of(21)
 }
 
