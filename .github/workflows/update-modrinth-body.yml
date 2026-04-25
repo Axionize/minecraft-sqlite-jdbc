@@ -1,0 +1,40 @@
+name: Sync Modrinth description
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ '.modrinth/body.md' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-body:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PATCH Modrinth project body
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          SLUG: minecraft-sqlite-jdbc
+        run: |
+          set -e
+          if [ ! -s .modrinth/body.md ]; then
+            echo "::error::.modrinth/body.md missing or empty"
+            exit 1
+          fi
+          payload=$(jq -n --rawfile body .modrinth/body.md '{body: $body}')
+          status=$(curl -s -o /tmp/resp -w "%{http_code}" \
+            -X PATCH \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "https://api.modrinth.com/v2/project/$SLUG")
+          echo "PATCH /v2/project/$SLUG → HTTP $status"
+          if [ "$status" != "204" ] && [ "$status" != "200" ]; then
+            cat /tmp/resp
+            exit 1
+          fi
+          echo "Body synced."
