@@ -25,12 +25,56 @@ Java 8+ required. Plain BukkitAPI servers without Java 8 (anything older than ~1
 
 ### When you actually need this mod
 
-CraftBukkit/Spigot/Paper have shipped `sqlite-jdbc` on the server's parent classloader since the 1.4-era ebeans commit. **You don't need this mod on those servers** — installing it has no effect: plugin classloaders delegate parent-first, so `Class.forName("org.sqlite.JDBC")` from any consumer plugin always resolves to the server-bundled copy regardless of what's in `plugins/`. Tested empirically across Paper 1.12.2 and 1.21.11 — DriverManager only ever sees the bundled driver registered.
+CraftBukkit/Spigot/Paper have shipped `sqlite-jdbc` on the server's parent classloader since the 1.4-era ebeans commit. Plugin classloaders delegate parent-first, so for the **default JDBC path** (`Class.forName("org.sqlite.JDBC")` / `DriverManager.getConnection`) the bundled driver always wins, regardless of what's in `plugins/`. Tested empirically on Paper 1.12.2 and 1.21.11.
 
 You need this mod when:
 
 - You're on **Fabric** or **NeoForge** — vanilla Minecraft ships no JDBC drivers at all
 - You're on a **Bukkit fork that's stripped the bundled driver** (rare, but happens on minified server builds)
+- You want a **newer SQLite engine version than your server bundles** — for `RETURNING`, `STRICT` tables, modern UPSERT on a 1.8–1.12 server, or just to track the latest Xerial release. See [Using a newer engine via the public API](#using-a-newer-engine-via-the-public-api) below.
+
+### Using a newer engine via the public API
+
+The default path uses the bundled driver. To use *this* mod's driver instead, your plugin softdepends on this holder and calls `MinecraftSqliteJdbc.connect(url)` directly:
+
+```java
+// in your plugin.yml
+softdepend: [sqlite-jdbc]
+```
+
+```java
+// in your plugin code
+Connection c;
+try {
+    c = MinecraftSqliteJdbc.connect("jdbc:sqlite:foo.db");
+} catch (NoClassDefFoundError | ClassNotFoundException notInstalled) {
+    // holder isn't installed — fall back to the bundled driver
+    c = DriverManager.getConnection("jdbc:sqlite:foo.db");
+}
+```
+
+`MinecraftSqliteJdbc` wraps a child-first `URLClassLoader` pointing at this jar's URL, parented to the platform classloader so `org.sqlite.*` must come from this jar (not the bundled chain). The returned `Connection` is a standard `java.sql.Connection` — keep your casts to `java.sql.*` interfaces; the impl class `org.sqlite.SQLiteConnection` lives in the child-first classloader and won't down-cast across the boundary.
+
+Verified on Paper 1.12.2 (bundled engine 3.21.0) — same JVM, same boot:
+
+```
+baseline DriverManager.getConnection → engine 3.21.0
+MinecraftSqliteJdbc.connect()        → engine 3.53.0
+```
+
+API surface (all static):
+
+| Method | Returns |
+|---|---|
+| `connect(String url)` | open `Connection` through this driver |
+| `connect(String url, Properties props)` | as above with props |
+| `driver()` | the `java.sql.Driver` instance |
+| `engineVersion()` | SQLite engine version (e.g. `"3.53.0"`) |
+| `driverVersion()` | driver version string (e.g. `"3.53.0.0"`) |
+| `eagerInit()` | warm the classloader at plugin enable |
+| `shutdown()` | release file handles + JNI on plugin disable |
+
+Grim Anti-Cheat's SQLite backend uses this API automatically when this holder is installed and ships a newer engine than the bundled one — see Grim's [Database wiki page](https://github.com/GrimAnticheat/Grim/wiki/Database#using-a-newer-sqlite-engine-on-a-bukkit-family-server).
 
 ### Bundled SQLite engine versions on common Bukkit lines
 
