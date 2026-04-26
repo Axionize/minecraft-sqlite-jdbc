@@ -25,15 +25,16 @@ Java 8+ required. Plain BukkitAPI servers without Java 8 (anything older than ~1
 
 ### When you actually need this mod
 
-Most CraftBukkit/Spigot/Paper servers from 1.13+ already ship a bundled `sqlite-jdbc` on the server classpath, and modern xerial releases there are recent enough for typical needs. You need this mod when:
+CraftBukkit/Spigot/Paper have shipped `sqlite-jdbc` on the server's parent classloader since the 1.4-era ebeans commit. **You don't need this mod on those servers** — installing it has no effect: plugin classloaders delegate parent-first, so `Class.forName("org.sqlite.JDBC")` from any consumer plugin always resolves to the server-bundled copy regardless of what's in `plugins/`. Tested empirically across Paper 1.12.2 and 1.21.11 — DriverManager only ever sees the bundled driver registered.
+
+You need this mod when:
 
 - You're on **Fabric** or **NeoForge** — vanilla Minecraft ships no JDBC drivers at all
-- You're on a **legacy Bukkit fork that's stripped the bundled driver**
-- Your server's bundled SQLite engine is **too old for features you need** (e.g. `ON CONFLICT DO UPDATE` needs engine 3.24+, only present on CraftBukkit 1.13.2+; `RETURNING` needs 3.35+)
+- You're on a **Bukkit fork that's stripped the bundled driver** (rare, but happens on minified server builds)
 
 ### Bundled SQLite engine versions on common Bukkit lines
 
-For reference if you're wondering whether the server's bundled driver is recent enough:
+For reference if you're wondering what engine version your server actually ships:
 
 | CraftBukkit / Paper line | Bundled SQLite engine |
 |---|---|
@@ -49,7 +50,7 @@ For reference if you're wondering whether the server's bundled driver is recent 
 | Paper 1.21.5 – 1.21.11 | 3.49.1.0 |
 | master / 26.x | 3.51.3.0 |
 
-This mod ships engine 3.53.0.0, the current xerial release. If you drop it onto a server that already has a bundled `sqlite-jdbc`, the server's bundled copy generally wins driver-class resolution at boot — `DriverManager.getConnection("jdbc:sqlite:…")` returns whichever driver registered first, and the bundled driver registers earlier in startup.
+This mod ships engine 3.53.0.0 (or whatever the latest xerial release is), but **none of that matters on Bukkit-family servers** — the bundled engine is what actually runs your queries. If you need a newer engine for features like `RETURNING` (3.35+) or `STRICT` tables (3.37+), upgrade to a Paper version that bundles a recent enough driver, or move that workload to Fabric/NeoForge where you can control the driver.
 
 ## Using it from a plugin or mod
 
