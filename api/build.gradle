@@ -1,0 +1,12 @@
+plugins {
+    id 'java'
+}
+
+base {
+    archivesName = "${rootProject.name}-api"
+}
+
+// Java 8 — the public API must load on 1.8-era servers.
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(8)
+}
