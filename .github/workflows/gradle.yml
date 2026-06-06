@@ -75,7 +75,7 @@ jobs:
 
           echo "jar=$jar_path" >> "$GITHUB_OUTPUT"
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
-          echo "Resolved version '$ver' from JAR '$jar_path'
+          echo "Resolved version '$ver' from JAR '$jar_path'"
           echo "Extracted version: $ver"
 
       # 6. Publishing
