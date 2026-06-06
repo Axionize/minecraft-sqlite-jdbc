@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # 1. Check out sources
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           # If triggered by dispatch, use the payload ref. Otherwise (push/manual), use main.
           ref: ${{ github.event.client_payload.ref || 'main' }}
@@ -42,31 +42,40 @@ jobs:
 
       # 3. Set up JDK21 + Gradle cache
       - name: Set up JDK21
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
       # 4. Validate and Build
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v5
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
       - name: Build Shaded JAR
-        uses: gradle/gradle-build-action@v2
-        with:
-          arguments: 'clean build --no-daemon --stacktrace'
+        run: ./gradlew clean build --no-daemon --stacktrace
 
       # 5. Find the JAR and extract its version
       - name: Locate JAR & extract version
         id: locate
         run: |
           set -e
+          # Read the version straight from gradle.properties — this matches the
+          # project version defined in build.gradle (library_version+release_date)
+          # and works for any version string, including pre-releases.
+          lib_ver=$(grep '^library_version=' gradle.properties | cut -d'=' -f2)
+          rel_date=$(grep '^release_date=' gradle.properties | cut -d'=' -f2)
+          if [ -z "$lib_ver" ] || [ -z "$rel_date" ]; then
+            echo "::error::Could not read library_version/release_date from gradle.properties" && exit 1
+          fi
+          ver="${lib_ver}+${rel_date}"
+
           jar_path=$(ls -1 build/libs/*-all.jar | head -n1)
           if [ -z "$jar_path" ]; then echo "::error::Could not find the *-all.jar file" && exit 1; fi
-          ver=$(basename "$jar_path" | sed -E 's/^sqlite-jdbc-([0-9.]+\+([0-9]{8}|[0-9]{4}-[0-9]{2}-[0-9]{2}))-all\.jar$/\1/')
-          if [ -z "$ver" ] || [ "$ver" == "$(basename "$jar_path")" ]; then echo "::error::Could not extract version from JAR filename" && exit 1; fi
+
           echo "jar=$jar_path" >> "$GITHUB_OUTPUT"
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved version '$ver' from JAR '$jar_path'
           echo "Extracted version: $ver"
 
       # 6. Publishing
@@ -83,7 +92,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to GitHub Actions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: minecraft-sqlite-jdbc
           path: ${{ steps.locate.outputs.jar }}

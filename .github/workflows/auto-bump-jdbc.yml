@@ -47,7 +47,7 @@ jobs:
 
       # 2) Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           token: ${{ steps.setup_context.outputs.token }}
 
@@ -121,46 +121,34 @@ jobs:
           fi
 
       # 5) Create Pull Request
-      - name: Create Pull Request
-        id: create-pr
+      # Commit the bump straight to main. No PR, no auto-merge, no branches to
+      # conflict. The push to main triggers the Nightly Release workflow, which
+      # builds and publishes the new version. (Requires AUTOMATION_PAT so the
+      # push is allowed to trigger the downstream workflow.)
+      - name: Commit bump to main
         if: steps.decision.outputs.should_bump == 'true'
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ steps.setup_context.outputs.token }}
-          author: ${{ steps.setup_context.outputs.author_string }}
-          committer: "${{ env.BOT_NAME }} <${{ env.BOT_EMAIL }}>"
-          branch: "bump/sqlite-${{ env.NEW_VER }}"
-          add-paths: gradle.properties
-          commit-message: "chore: bump sqlite-jdbc to ${{ env.NEW_VER }}"
-          title: "chore: bump sqlite-jdbc to ${{ env.NEW_VER }}"
-          body: ${{ steps.decision.outputs.changelog }}
-          delete-branch: true
-
-      # 6) Enable PR Auto-Merge
-      - name: Enable PR auto-merge
-        if: steps.create-pr.outputs.pull-request-number
-        env:
-          GH_TOKEN: ${{ steps.setup_context.outputs.token }}
-        run: |
-          gh pr merge --squash --auto "${{ steps.create-pr.outputs.pull-request-number }}"
-
-      # 7) Trigger Release Workflow
-      - name: Trigger Nightly Release via Dispatch
-        if: steps.decision.outputs.should_dispatch == 'true'
-        env:
-          GH_TOKEN: ${{ steps.setup_context.outputs.token }}
         run: |
           set -e
-          JSON_PAYLOAD=$(jq -n \
-            --arg ver "${{ steps.decision.outputs.new_version }}" \
-            --arg changelog "${{ steps.decision.outputs.changelog }}" \
-            --arg ref "refs/heads/bump/sqlite-${{ steps.decision.outputs.new_version }}" \
-            '{event_type: "sqlite_jdbc_bumped", client_payload: {version: $ver, changelog: $changelog, ref: $ref}}')
+          git config user.name  "${{ env.GIT_AUTHOR_NAME }}"
+          git config user.email "${{ env.GIT_AUTHOR_EMAIL }}"
+          git add gradle.properties
+          git commit -m "chore: bump sqlite-jdbc to ${{ env.NEW_VER }}"
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed bump to main."
+              exit 0
+            fi
+            echo "Push rejected (attempt $i/3), rebasing on latest main and retrying..."
+            git pull --rebase origin main
+          done
+          echo "::error::Failed to push bump to main after 3 attempts."
+          exit 1
 
-          echo "Sending dispatch with payload: $JSON_PAYLOAD"
-          echo "$JSON_PAYLOAD" | gh api \
-            --method POST \
-            -H "Accept: application/vnd.github.v3+json" \
-            /repos/${{ github.repository }}/dispatches \
-            --input -
-          echo "Dispatch event sent."
+      # Rebuild path only: when re-running without a version change there is no
+      # push to main, so trigger the Nightly Release workflow explicitly.
+      - name: Trigger Nightly Release (rebuild only)
+        if: steps.decision.outputs.should_bump != 'true' && steps.decision.outputs.should_dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ steps.setup_context.outputs.token }}
+        run: |
+          gh workflow run "Nightly Release" --ref main
